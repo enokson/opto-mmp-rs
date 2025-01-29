@@ -100,6 +100,7 @@ pub mod mmp_errors {
 
 #[derive(Debug)]
 pub struct GetResponse {
+    pub source_id: u16,
     pub t_label: u8,
     pub t_code: u8,
     pub r_code: u8,
@@ -123,6 +124,7 @@ pub struct MetaDataResponse {
 
 #[derive(Debug)]
 pub struct ReadOneResponse {
+    pub source_id: u16,
     pub t_label: u8,
     pub r_code: u8,
     pub t_code: u8,
@@ -131,6 +133,7 @@ pub struct ReadOneResponse {
 
 #[derive(Debug)]
 pub struct SetResponse {
+    pub source_id: u16,
     pub t_label: u8,
     pub r_code: u8,
     pub t_code: u8,
@@ -186,9 +189,11 @@ pub fn pack_read_req(options: ReadOptions) -> [u8;16] {
 pub fn unpack_read_res(packet: Vec<u8>) -> GetResponse {
     let t_label = packet[2] >> 2;
     let t_code = packet[3] >> 4;
+    let source_id = u16::from_be_bytes([packet[4], packet[5]]);
     let r_code = packet[6] >> 4;
     let data = packet[16..].to_vec();
     GetResponse {
+        source_id,
         t_label,
         t_code,
         r_code,
@@ -229,6 +234,7 @@ pub fn unpack_read_quad_res(response: [u8; 16]) -> ReadOneResponse {
     ReadOneResponse {
         t_label: response[2] >> 2,
         t_code: response[3] >> 4,
+        source_id: u16::from_be_bytes([response[4], response[5]]),
         r_code: response[6] >> 4,
         data: [response[12], response[13], response[14], response[15]]
     }
@@ -272,6 +278,7 @@ pub fn unpack_write_res(response: [u8; 12]) -> SetResponse {
     SetResponse {
         t_label: response[2] >> 2,
         t_code: response[3] >> 4,
+        source_id: u16::from_be_bytes([response[4], response[5]]),
         r_code: response[6] >> 4
     }
 }
