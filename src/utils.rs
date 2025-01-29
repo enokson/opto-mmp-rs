@@ -1,3 +1,4 @@
+
 /// Transaction Codes (tcode)
 pub const T_CODE_WRITE_QUAD_REQUEST: u8     = 0;
 pub const T_CODE_WRITE_BLOCK_REQUEST: u8    = 1;
@@ -72,87 +73,122 @@ pub const MAX_ELEMENTS_INTEGER_3: u64      = 0x0000_1C00;
 pub const MAX_ELEMENTS_INTEGER: u64        = MAX_ELEMENTS_INTEGER_1 + MAX_ELEMENTS_INTEGER_2 + MAX_ELEMENTS_INTEGER_3;
 pub const MAX_BYTES_INTEGER: u64           = MAX_ELEMENTS_INTEGER * 4;
 
+pub struct Offset<T>(pub T);
 
-pub mod mmp_errors {
-    pub const NO_ERROR: u16 = 0x0000;
-    pub const UNIDENTIFIED_COMMAND: u16 = 0xE001;
-}
-
-
-
-use std::error::Error;
-use std::fmt::Display;
-use std::io::prelude::*;
-use std::net::TcpStream;
-
-#[derive(Debug)]
-pub enum AppError {
-    IoError(std::io::Error),
-    ParseIntError(std::num::ParseIntError),
-    InvalidData,
-}
-
-impl Display for AppError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            AppError::IoError(e) => write!(f, "IO Error: {}", e),
-            AppError::InvalidData => write!(f, "Invalid data"),
-            AppError::ParseIntError(e) => write!(f, "ParseIntError: {}", e),
-        }
+impl From<Offset<u64>> for [u8;6] {
+    fn from(value: Offset<u64>) -> [u8;6] {
+        let bytes_8: [u8;8] = u64::to_be_bytes(value.0);
+        let bytes_6: [u8;6] = [bytes_8[2], bytes_8[3], bytes_8[4], bytes_8[5], bytes_8[6], bytes_8[7]];
+        bytes_6
     }
 }
 
-impl Error for AppError {}
-
-pub fn send_puc(stream: &mut TcpStream) -> Result<(), AppError> {
-    let msg = build_puc_request();
-    match stream.write(&msg) {
-        Ok(_) => Ok(()),
-        Err(e) => Err(AppError::IoError(e)),
-    }?;
-    Ok(())
+impl From<Offset<u32>> for [u8;6] {
+    fn from(value: Offset<u32>) -> [u8;6] {
+        let bytes_4: [u8;4] = u32::to_be_bytes(value.0);
+        let bytes_6: [u8;6] = [  0x00, 0x00, bytes_4[0], bytes_4[1], bytes_4[2], bytes_4[3] ];
+        bytes_6
+    }
 }
 
-pub struct ReadBlockResponse<'a> {
+pub struct Bytes<T>(pub T);
+
+pub mod mmp_errors {
+  pub const NO_ERROR: u16 = 0x0000;
+  pub const UNIDENTIFIED_COMMAND: u16 = 0xE001;
+}
+
+#[derive(Debug)]
+pub struct GetResponse {
     pub t_label: u8,
     pub t_code: u8,
     pub r_code: u8,
-    pub data: &'a [u8]
+    pub data: Vec<u8>
 }
 
-pub struct ReadQuadRes {
+#[derive(Debug)]
+pub struct MetaDataRequest {
+    pub source_id: u16,
+    pub t_label: u8,
+    pub t_code: u8,
+}
+
+#[derive(Debug)]
+pub struct MetaDataResponse {
+    pub source_id: u16,
+    pub t_label: u8,
+    pub t_code: u8,
+    pub r_code: u8,
+}
+
+#[derive(Debug)]
+pub struct ReadOneResponse {
     pub t_label: u8,
     pub r_code: u8,
     pub t_code: u8,
     pub data: [u8;4],
 }
 
-pub struct WriteResponse {
+#[derive(Debug)]
+pub struct SetResponse {
     pub t_label: u8,
     pub r_code: u8,
     pub t_code: u8,
 }
 
-pub fn mk_read_req(t_label: u8, destination_offset: [u8;6], data_length: u16) -> [u8;16] {
+#[derive(Debug)]
+pub struct ReadOptions {
+    pub source_id: u16,
+    pub t_label: u8,
+    pub offset: [u8;6],
+    pub data_length: u32,
+}
+
+#[derive(Debug)]
+pub struct ReadOneOptions {
+    pub source_id: u16,
+    pub t_label: u8,
+    pub offset: [u8;6],
+}
+
+#[derive(Debug)]
+pub struct WriteOptions<'a> {
+    pub source_id: u16,
+    pub t_label: u8,
+    pub offset: [u8;6],
+    pub data_length: u16,
+    pub data: &'a [u8],
+}
+
+#[derive(Debug)]
+pub struct WriteOneOptions {
+    pub source_id: u16,
+    pub t_label: u8,
+    pub address: [u8;6],
+    pub data: u32,
+}
+
+pub fn pack_read_req(options: ReadOptions) -> [u8;16] {
     let destination_id: [u8;2] = [0x00, 0x00];
-    let source_id: [u8;2] = [0x00, 0x00];
+    let source_id: [u8;2] = options.source_id.to_be_bytes();
     let extended_code: [u8;2] = [0x00, 0x00];
-    let len_byte_array = data_length.to_be_bytes();
+    let len = options.data_length.to_be_bytes();
+    let offset = options.offset;
     let meta_data: [u8;16] = [
-        destination_id[0], destination_id[1], t_label << 2, T_CODE_READ_BLOCK_REQUEST << 4,
-        source_id[0], source_id[1], destination_offset[0], destination_offset[1],
-        destination_offset[2], destination_offset[3], destination_offset[4], destination_offset[5],
-        len_byte_array[0], len_byte_array[1], extended_code[0], extended_code[1]
+        destination_id[0], destination_id[1], options.t_label << 2, T_CODE_READ_BLOCK_REQUEST << 4,
+        source_id[0], source_id[1], offset[0], offset[1],
+        offset[2], offset[3], offset[4], offset[5],
+        len[0], len[1], extended_code[0], extended_code[1]
     ];
     meta_data
 }
 
-pub fn mk_read_res(packet: &[u8]) -> ReadBlockResponse {
+pub fn unpack_read_res(packet: Vec<u8>) -> GetResponse {
     let t_label = packet[2] >> 2;
     let t_code = packet[3] >> 4;
     let r_code = packet[6] >> 4;
-    let data = &packet[16..];
-    ReadBlockResponse {
+    let data = packet[16..].to_vec();
+    GetResponse {
         t_label,
         t_code,
         r_code,
@@ -160,19 +196,37 @@ pub fn mk_read_res(packet: &[u8]) -> ReadBlockResponse {
     }
 }
 
-pub fn mk_read_quad_req(t_label: u8, address: [u8;6]) -> [u8;12] {
+#[macro_export]
+macro_rules! unpack_read_res {
+    ($data:expr, $len:expr) => {{
+        let data: [u8;$len] = $data[16..16 + $len].try_into().unwrap();
+        (
+            $crate::utils::MetaDataResponse {
+                source_id: u16::from_be_bytes([$data[4], $data[5]]),
+                t_label: $data[2] >> 2,
+                t_code: $data[3] >> 4,
+                r_code: $data[6] >> 4,
+            },
+            data
+        )
+    }};
+}
+
+pub fn pack_read_quad_req(options: ReadOneOptions) -> [u8;12] {
     let destination_id: [u8;2] = [0x00, 0x00];
-    let source_id: [u8;2] = [0x00, 0x00];
+    let source_id: [u8;2] = options.source_id.to_be_bytes();
+    let t_label = options.t_label << 2;
+    let address = options.offset;
     let msg: [u8;12] = [
-        destination_id[0], destination_id[1], t_label << 2, T_CODE_READ_QUAD_REQUEST << 4,
+        destination_id[0], destination_id[1], t_label, T_CODE_READ_QUAD_REQUEST << 4,
         source_id[0], source_id[1], address[0], address[1],
         address[2], address[3], address[4], address[5]
     ];
     msg
 }
- 
-pub fn mk_read_quad_res(response: [u8; 16]) -> ReadQuadRes {
-    ReadQuadRes {
+
+pub fn unpack_read_quad_res(response: [u8; 16]) -> ReadOneResponse {
+    ReadOneResponse {
         t_label: response[2] >> 2,
         t_code: response[3] >> 4,
         r_code: response[6] >> 4,
@@ -180,76 +234,62 @@ pub fn mk_read_quad_res(response: [u8; 16]) -> ReadQuadRes {
     }
 }
 
-pub fn mk_write_req(t_label: u8, address: [u8;6], length: u16, mut data: Vec<u8>) -> Vec<u8> {
+pub fn pack_write_req(options: WriteOptions) -> Vec<u8> {
     let destination_id: [u8;2] = [0x00, 0x00];
-    let source_id: [u8;2] = [0x00, 0x00];
+    let source_id: [u8;2] = options.source_id.to_be_bytes();
     let extended_code: [u8;2] = [0x00, 0x00];
-    let len_byte_array = length.to_be_bytes();
+    let t_label = options.t_label << 2;
+    let len = options.data_length.to_be_bytes();
+    let address = options.offset;
     let meta_data: [u8;16] = [
-        destination_id[0], destination_id[1], t_label << 2, T_CODE_WRITE_BLOCK_REQUEST << 4,
+        destination_id[0], destination_id[1], t_label, T_CODE_WRITE_BLOCK_REQUEST << 4,
         source_id[0], source_id[1], address[0], address[1],
         address[2], address[3], address[4], address[5],
-        len_byte_array[0], len_byte_array[1], extended_code[0], extended_code[1]
+        len[0], len[1], extended_code[0], extended_code[1]
     ];
-    let mut msg: Vec<u8> = Vec::with_capacity(16 + length as usize);
+    let mut msg: Vec<u8> = Vec::with_capacity(16 + options.data_length as usize);
     msg.extend_from_slice(&meta_data);
-    msg.append(&mut data);
+    msg.extend_from_slice(options.data);
     msg
 }
 
-pub fn mk_write_quad_req(t_label: u8, address: [u8;6], data: u32) -> [u8;16] {
+pub fn pack_write_quad_req(options: WriteOneOptions) -> [u8;16] {
     let destination_id: [u8;2] = [0x00, 0x00];
     let source_id: [u8;2] = [0x00, 0x00];
-    let data_array = data.to_be_bytes();
+    let data = options.data.to_be_bytes();
+    let t_label = options.t_label << 2;
+    let offset = options.address;
     let msg: [u8;16] = [
-        destination_id[0], destination_id[1], t_label << 2, T_CODE_WRITE_QUAD_REQUEST << 4,
-        source_id[0], source_id[1], address[0], address[1],
-        address[2], address[3], address[4], address[5],
-        data_array[0], data_array[1], data_array[2], data_array[3]
+        destination_id[0], destination_id[1], t_label, T_CODE_WRITE_QUAD_REQUEST << 4,
+        source_id[0], source_id[1], offset[0], offset[1],
+        offset[2], offset[3], offset[4], offset[5],
+        data[0], data[1], data[2], data[3]
     ];
     msg
 }
 
-pub fn mk_write_quad_res(response: [u8; 12]) -> WriteResponse {
-    WriteResponse {
+pub fn unpack_write_res(response: [u8; 12]) -> SetResponse {
+    SetResponse {
         t_label: response[2] >> 2,
         t_code: response[3] >> 4,
         r_code: response[6] >> 4
     }
 }
 
-pub fn build_puc_request() -> [u8;16] {
-    mk_write_quad_req(0x4,  [0xFF, 0xFF, 0xF0, 0x38, 0x00, 0x00], 1)
+pub fn pack_puc_req(source_id: u16, t_label: u8) -> [u8;16] {
+    let options = WriteOneOptions {
+        source_id,
+        t_label,
+        address: [0xFF, 0xFF, 0xF0, 0x38, 0x00, 0x00],
+        data: 0x0000_0001
+    };
+    pack_write_quad_req(options)
 }
 
-fn main() {
-    println!("Hello, world!");
+pub fn u64_to_offset(n: u64) -> [u8;6] {
+    Offset(n).into()
 }
 
-#[cfg(test)]
-mod test {
-
-    use super::*;
-
-    #[test]
-    fn unpack_write_response_test() {
-        let response: [u8;12] = [
-            0b00000000, 0b00000000, 0b00000100, 0b00100000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000,
-            0b00000000, 0b00000000, 0b00000000, 0b00000000
-        ];
-        let result = mk_write_quad_res(response);
-        assert_eq!(result.t_label, 1);
-        assert_eq!(result.t_code, 2);
-        // assert_eq!(0xFF, 0x1C);
-    }
-
-    #[test]
-    fn test_shift () {
-        let mut response: [u8;4] = [
-            0b00000000, 0b00000000, 0b00000100, 0b01100000,
-        ];
-        response[3] >>= 4;
-        assert_eq!(1 << 4, 0b00010000);
-    }
+pub fn u32_to_offset(n: u32) -> [u8;6] {
+    Offset(n).into()
 }
